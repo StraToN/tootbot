@@ -7,54 +7,53 @@ from datetime import datetime, timedelta
 import feedparser
 from mastodon import Mastodon
 import requests
+import re
+import sqlite3
+from datetime import datetime, date, time, timedelta
+import argparse
+import urllib.parse
 
-if len(sys.argv) < 4:
-    print("Usage: python3 tootbot.py twitter_account mastodon_login mastodon_passwd mastodon_instance [max_days [footer_tags [delay]]]")  # noqa
-    sys.exit(1)
+parser = argparse.ArgumentParser(description='Synchronize a Twitter account or search using TwitRSS to Mastodon.')
+group_twitter_or_search = parser.add_mutually_exclusive_group(required=True)
+group_twitter_or_search.add_argument('--search', '-s', nargs=1, help='a search query, like %23GodotEngine+exclude%3Areplies')
+group_twitter_or_search.add_argument('--twitter_account', '-t', nargs=1, help='a twitter account')
+parser.add_argument('mastodon_login', help='the mastodon login')
+parser.add_argument('mastodon_passwd', help='the mastodon password')
+parser.add_argument('mastodon_instance', help='the mastodon instance')
+parser.add_argument('--days', '-d', type=int, help='number of days')
+args = parser.parse_args()
+
+
+#if len(sys.argv) < 4:
+    #print("Usage: python3 tootbot.py twitter_account mastodon_login mastodon_passwd mastodon_instance")
+    #print("Or: python3 tootbot.py -s search mastodon_login mastodon_passwd mastodon_instance")
+    #sys.exit(1)
 
 # sqlite db to store processed tweets (and corresponding toots ids)
 sql = sqlite3.connect('tootbot.db')
 db = sql.cursor()
-db.execute('''CREATE TABLE IF NOT EXISTS tweets (tweet text, toot text,
-           twitter text, mastodon text, instance text)''')
+db.execute('''CREATE TABLE IF NOT EXISTS tweets (tweet text, toot text, twitter text, search text, mastodon text, instance text)''')
 
-if len(sys.argv) > 4:
-    instance = sys.argv[4]
-else:
-    instance = 'amicale.net'
-
-if len(sys.argv) > 5:
-    days = int(sys.argv[5])
-else:
+instance = args.mastodon_instance
+days = args.days
+if days == None:
     days = 1
 
-if len(sys.argv) > 6:
-    tags = sys.argv[6]
-else:
-    tags = None
-
-if len(sys.argv) > 7:
-    delay = int(sys.argv[7])
-else:
-    delay = 0
-
-
-source = sys.argv[1]
-mastodon = sys.argv[2]
-passwd = sys.argv[3]
+search = urllib.parse.quote_plus(args.search[0])
+twitter = args.twitter_account
+mastodon = args.mastodon_login
+passwd = args.mastodon_passwd
 
 mastodon_api = None
 
-if source[:4] == 'http':
-    d = feedparser.parse(source)
-    twitter = None
-else:
-    d = feedparser.parse('http://twitrss.me/twitter_user_to_rss/?user='+source)
-    twitter = source
+if search == None:
+    d = feedparser.parse('http://twitrss.me/twitter_user_to_rss/?user='+twitter)
+elif twitter == None:
+    d = feedparser.parse('http://twitrss.me/twitter_search_to_rss/?term='+search)
 
 for t in reversed(d.entries):
     # check if this tweet has been processed
-    db.execute('SELECT * FROM tweets WHERE tweet = ? AND twitter = ?  and mastodon = ? and instance = ?', (t.id, source, mastodon, instance))  # noqa
+    db.execute('SELECT * FROM tweets WHERE tweet = ? AND twitter = ? OR search = ? and mastodon = ? and instance = ?',(t.id, twitter, search, mastodon, instance))
     last = db.fetchone()
     dt = t.published_parsed
     age = datetime.now()-datetime(dt.tm_year, dt.tm_mon, dt.tm_mday,
@@ -129,6 +128,6 @@ for t in reversed(d.entries):
                                             visibility='public',
                                             spoiler_text=None)
             if "id" in toot:
-                db.execute("INSERT INTO tweets VALUES ( ? , ? , ? , ? , ? )",
-                           (t.id, toot["id"], source, mastodon, instance))
+                db.execute("INSERT INTO tweets VALUES ( ? , ? , ? , ? , ? , ? )",
+                (t.id, toot["id"], twitter, search, mastodon, instance))
                 sql.commit()
