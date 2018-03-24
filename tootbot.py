@@ -39,21 +39,31 @@ days = args.days
 if days == None:
     days = 1
 
-search = urllib.parse.quote_plus(args.search[0])
-twitter = args.twitter_account
+search = None
+if args.search != None:
+    search = urllib.parse.quote_plus(args.search[0])
+twitter = None
+if args.twitter_account != None:
+    twitter = args.twitter_account[0]
 mastodon = args.mastodon_login
 passwd = args.mastodon_passwd
 
 mastodon_api = None
+is_search = False
 
 if search == None:
     d = feedparser.parse('http://twitrss.me/twitter_user_to_rss/?user='+twitter)
+    is_search = False
 elif twitter == None:
     d = feedparser.parse('http://twitrss.me/twitter_search_to_rss/?term='+search)
+    is_search = True
 
 for t in reversed(d.entries):
     # check if this tweet has been processed
-    db.execute('SELECT * FROM tweets WHERE tweet = ? AND twitter = ? OR search = ? and mastodon = ? and instance = ?',(t.id, twitter, search, mastodon, instance))
+    if is_search:
+        db.execute('SELECT * FROM tweets WHERE tweet = ? AND search = ? and mastodon = ? and instance = ?',(t.id, search, mastodon, instance))
+    else:
+        db.execute('SELECT * FROM tweets WHERE tweet = ? AND twitter = ? and mastodon = ? and instance = ?',(t.id, twitter, mastodon, instance))
     last = db.fetchone()
     dt = t.published_parsed
     age = datetime.now()-datetime(dt.tm_year, dt.tm_mon, dt.tm_mday,
@@ -113,13 +123,10 @@ for t in reversed(d.entries):
             c = c.replace(l, ' ')
 
         # remove ellipsis
-        c = c.replace('\xa0…', ' ')
-
-        if twitter is None:
-            c = c + '\nSource: '+ t.authors[0].name +'\n\n' + t.link
-
-        if tags:
-            c = c + '\n' + tags
+        c = c.replace('\xa0…',' ')
+        
+        # add original url
+        c = c + "\nOriginal URL: " + t.id
 
         if toot_media is not None:
             toot = mastodon_api.status_post(c, in_reply_to_id=None,
