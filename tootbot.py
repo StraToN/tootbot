@@ -13,14 +13,32 @@ from datetime import datetime, date, time, timedelta
 import argparse
 import urllib.parse
 
+query_services = { 
+    'twitrss': { 
+        'base_url': 'http://twitrss.me/',
+        'account_search': 'twitter_user_to_rss/?user=',
+        'global_search': 'twitter_search_to_rss/?term=',
+        'item_field_message': 'title'
+    },
+    'queryrss': {
+        'base_url': 'https://queryfeed.net/',
+        'account_search': 'tw?q=',
+        'global_search': 'tw?q=',
+        'item_field_message': 'description'
+    }
+}
+
 parser = argparse.ArgumentParser(description='Synchronize a Twitter account or search using TwitRSS to Mastodon.')
 group_twitter_or_search = parser.add_mutually_exclusive_group(required=True)
 group_twitter_or_search.add_argument('--search', '-s', nargs=1, help='a search query, like %23GodotEngine+exclude%3Areplies')
 group_twitter_or_search.add_argument('--twitter_account', '-t', nargs=1, help='a twitter account')
+parser.add_argument('--queryfeed', '-q', action="store_true", help='Uses Queryfeed service url. If not provided, uses http://twitrss.me/twitter_search_to_rss/?term=  by default.')
 parser.add_argument('mastodon_login', help='the mastodon login')
 parser.add_argument('mastodon_passwd', help='the mastodon password')
 parser.add_argument('mastodon_instance', help='the mastodon instance')
 parser.add_argument('--days', '-d', type=int, help='number of days')
+parser.add_argument('--tags', '-g', help='Footer tags')
+parser.add_argument('--delay', '-l', type=int, help='Delay')
 args = parser.parse_args()
 
 
@@ -38,10 +56,22 @@ instance = args.mastodon_instance
 days = args.days
 if days == None:
     days = 1
+tags = None
+if args.tags != None:
+    tags = args.tags
+delay = args.delay
+if delay == None:
+    delay = 0
 
 search = None
 if args.search != None:
     search = urllib.parse.quote_plus(args.search[0])
+
+queryfeed = 'twitrss'
+if args.queryfeed:
+    queryfeed = 'queryrss'
+feed = query_services[queryfeed]
+
 twitter = None
 if args.twitter_account != None:
     twitter = args.twitter_account[0]
@@ -50,12 +80,13 @@ passwd = args.mastodon_passwd
 
 mastodon_api = None
 is_search = False
-
 if search == None:
-    d = feedparser.parse('http://twitrss.me/twitter_user_to_rss/?user='+twitter)
+    #print("URL called:" + feed['base_url'] + feed['account_search'] + twitter)
+    d = feedparser.parse(feed['base_url'] + feed['account_search'] + twitter)
     is_search = False
 elif twitter == None:
-    d = feedparser.parse('http://twitrss.me/twitter_search_to_rss/?term='+search)
+    #print("URL called:" + feed['base_url'] + feed['global_search'] + search)
+    d = feedparser.parse(feed['base_url'] + feed['global_search'] + search)
     is_search = True
 
 for t in reversed(d.entries):
@@ -98,7 +129,8 @@ for t in reversed(d.entries):
                 print("ERROR: First Login Failed!")
                 sys.exit(1)
 
-        c = t.title
+        c = getattr(t, feed['item_field_message'])
+
         if twitter and t.author.lower() != ('(@%s)' % twitter).lower():
             c = ("RT https://twitter.com/%s\n" % t.author[2:-1]) + c
         toot_media = []
@@ -128,6 +160,7 @@ for t in reversed(d.entries):
         # add original url
         c = c + "\nOriginal URL: " + t.id
 
+        #print(c)
         if toot_media is not None:
             toot = mastodon_api.status_post(c, in_reply_to_id=None, media_ids=toot_media, sensitive=False, visibility='unlisted', spoiler_text=None)
             if "id" in toot:
